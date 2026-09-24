@@ -9,15 +9,82 @@ public class ChatServer {
     private static final int PORT = 5000;
     static Map<String, ClientHandler> clients = new ConcurrentHashMap<>();
 
+    private static ServerFrame serverFrame;
+    private static ServerSocket serverSocket;
+    private static volatile boolean isServerRunning = false;
+    private static Thread serverThread;
+
     public static void main(String[] args) {
         DatabaseManager.initializeDB();
 
-        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
-            System.out.println("Server (Danh bạ Hybrid P2P) đang chạy tại port " + PORT + "...");
-            while (true) {
-                Socket socket = serverSocket.accept();
-                ClientHandler client = new ClientHandler(socket);
-                new Thread(client).start();
+        // Khởi động giao diện quản lý Server GUI
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            serverFrame = new ServerFrame();
+            serverFrame.setVisible(true);
+
+            // Xử lý sự kiện khi bấm nút Khởi động / Dừng Server trên giao diện
+            serverFrame.setToggleServerListener(e -> {
+                if (!isServerRunning) {
+                    // Bấm để khởi động Server
+                    startServerEngine();
+                } else {
+                    // Bấm để dừng Server
+                    stopServerEngine();
+                }
+            });
+
+            // Xử lý sự kiện Gửi thông báo toàn hệ thống (Broadcast)
+            serverFrame.setBroadcastListener(e -> {
+                String announcement = serverFrame.getBroadcastText();
+                if (!announcement.isEmpty()) {
+                    routeText("Mọi người", "SYSTEM_ANNOUNCE", announcement);
+                    serverFrame.appendLog("[THÔNG BÁO TỪ SERVER]: " + announcement);
+                    serverFrame.clearBroadcastText();
+                }
+            });
+        });
+    }
+
+    public static void startServerEngine() {
+        if (isServerRunning) return;
+
+        serverThread = new Thread(() -> {
+            try {
+                serverSocket = new ServerSocket(PORT);
+                isServerRunning = true;
+
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    serverFrame.setServerRunningState(true);
+                    serverFrame.appendLog("Server (Danh bạ Hybrid P2P) đã khởi động thành công tại port " + PORT + "...");
+                });
+
+                while (isServerRunning) {
+                    Socket socket = serverSocket.accept();
+                    ClientHandler client = new ClientHandler(socket);
+                    new Thread(client).start();
+                }
+            } catch (IOException e) {
+                isServerRunning = false;
+                if (serverFrame != null) {
+                    javax.swing.SwingUtilities.invokeLater(() -> {
+                        serverFrame.setServerRunningState(false);
+                        serverFrame.appendLog("[LỖI SERVER]: Không thể mở cổng " + PORT + " (Có thể đã bị chiếm dụng).");
+                    });
+                }
+            }
+        });
+        serverThread.start();
+    }
+
+    public static void stopServerEngine() {
+        try {
+            isServerRunning = false;
+            if (serverSocket != null && !serverSocket.isClosed()) {
+                serverSocket.close();
+            }
+            if (serverFrame != null) {
+                serverFrame.setServerRunningState(false);
+                serverFrame.appendLog("Server đã dừng hoạt động.");
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -25,24 +92,32 @@ public class ChatServer {
     }
 
     public static synchronized void broadcastUserDirectory() {
-        // Lấy danh sách toàn bộ người dùng từ CSDL
         java.util.List<String> allUsers = DatabaseManager.getAllUsers();
+
+        if (serverFrame != null) {
+            java.util.List<String> activeList = new java.util.ArrayList<>();
+            for (String u : allUsers) {
+                if (clients.containsKey(u)) {
+                    activeList.add(u + " (Online)");
+                } else {
+                    activeList.add(u + " (Offline)");
+                }
+            }
+            serverFrame.updateClientList(activeList.toArray(new String[0]));
+        }
 
         for (ClientHandler currentClient : clients.values()) {
             StringBuilder directory = new StringBuilder("Mọi người");
 
             for (String uname : allUsers) {
-                // Bỏ qua tên của chính mình
                 if (uname.equals(currentClient.getUsername())) continue;
 
                 if (clients.containsKey(uname)) {
-                    // Người này đang Online
                     ClientHandler c = clients.get(uname);
                     directory.append(",").append(uname).append(":")
                             .append(c.getIp()).append(":")
                             .append(c.getP2pPort()).append(":ONLINE");
                 } else {
-                    // Người này đang Offline (gán IP và Port ảo để phân biệt)
                     directory.append(",").append(uname).append(":null:0:OFFLINE");
                 }
             }
@@ -62,6 +137,13 @@ public class ChatServer {
             if (client != null) {
                 client.sendData(1, "[Riêng tư từ " + sender + "]", content);
             }
+        }
+    }
+
+    public static void log(String message) {
+        System.out.println(message);
+        if (serverFrame != null) {
+            serverFrame.appendLog(message);
         }
     }
 }
@@ -92,7 +174,6 @@ class ClientHandler implements Runnable {
     @Override
     public void run() {
         try {
-            // --- 1. VÒNG LẶP XÁC THỰC ĐĂNG NHẬP/ĐĂNG KÝ ---
             while (true) {
                 String command = dis.readUTF();
                 String reqUsername = dis.readUTF();
@@ -102,8 +183,8 @@ class ClientHandler implements Runnable {
                 if (command.equals("REGISTER")) {
                     if (DatabaseManager.registerUser(reqUsername, reqPassword)) {
                         dos.writeUTF("REGISTER_SUCCESS");
-                        // Cập nhật danh bạ cho tất cả mọi người ngay khi có người đăng ký mới
                         ChatServer.broadcastUserDirectory();
+                        ChatServer.log("[LOG] Tài khoản mới đăng ký thành công: " + reqUsername);
                     } else {
                         dos.writeUTF("REGISTER_FAIL");
                     }
@@ -113,7 +194,6 @@ class ClientHandler implements Runnable {
                         dos.writeUTF("LOGIN_SUCCESS");
                         dos.flush();
 
-                        // Xác thực thành công, gán thông tin và mở rào chắn
                         this.username = reqUsername;
                         this.p2pPort = reqP2pPort;
                         break;
@@ -124,28 +204,23 @@ class ClientHandler implements Runnable {
                 }
             }
 
-            // --- 2. SAU KHI VÀO PHÒNG CHAT THÀNH CÔNG ---
             ChatServer.clients.put(username, this);
-            System.out.println("[LOG] " + username + " đăng nhập thành công từ IP " + ip);
+            ChatServer.log("[LOG] " + username + " đăng nhập thành công từ IP " + ip);
 
-            // Thông báo cho mọi người biết user này vừa vào
             ChatServer.routeText("Mọi người", "Hệ thống", username + " đã tham gia phòng.");
             ChatServer.broadcastUserDirectory();
 
-            // Tải và gửi lịch sử chat PHÒNG CHUNG
             java.util.List<String[]> publicHistory = DatabaseManager.getPublicChatHistory();
             for (String[] msg : publicHistory) {
                 this.sendData(1, msg[0], msg[1]);
             }
 
-            // Tải và gửi lịch sử chat RIÊNG TƯ của chính user này
             java.util.List<String[]> privateHistory = DatabaseManager.getPrivateChatHistory(username);
             for (String[] msg : privateHistory) {
                 String sender = msg[0];
                 String target = msg[1];
                 String content = msg[2];
 
-                // Định dạng lại tên để Client dễ phân biệt ai gửi cho ai
                 if (sender.equals(username)) {
                     this.sendData(1, "[Bạn gửi riêng cho " + target + "]", content);
                 } else {
@@ -153,27 +228,21 @@ class ClientHandler implements Runnable {
                 }
             }
 
-            // --- 3. VÒNG LẶP LẮNG NGHE TIN NHẮN MỚI TỪ CLIENT ---
             while (true) {
                 int type = dis.readInt();
                 String target = dis.readUTF();
                 if (type == 1) {
                     String message = dis.readUTF();
-
-                    // Lưu tin nhắn mới vào CSDL
                     DatabaseManager.saveMessage(username, target, message);
-
-                    // Chuyển tiếp tin nhắn tới người nhận
                     ChatServer.routeText(target, username, message);
                 }
             }
         } catch (IOException e) {
-            // Khi Client tắt app (ngắt kết nối)
             if (username != null) {
                 ChatServer.clients.remove(username);
                 ChatServer.routeText("Mọi người", "Hệ thống", username + " đã thoát.");
                 ChatServer.broadcastUserDirectory();
-                System.out.println("[LOG] " + username + " đã ngắt kết nối.");
+                ChatServer.log("[LOG] " + username + " đã ngắt kết nối.");
             }
         }
     }
