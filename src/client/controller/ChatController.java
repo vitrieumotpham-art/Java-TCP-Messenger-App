@@ -80,7 +80,7 @@ public class ChatController {
             File file = fileChooser.getSelectedFile();
             try {
                 model.sendFile(targetRaw, file);
-
+                model.sendText(targetRaw, "[File] " + file.getName());
                 String realTarget = targetRaw;
                 if (!targetRaw.equals("Mọi người") && targetRaw.contains(" (")) {
                     realTarget = targetRaw.substring(0, targetRaw.indexOf(" ("));

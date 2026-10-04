@@ -8,7 +8,7 @@ public class AuthController {
     private AuthView authView;
     private ChatModel model;
 
-    private final String SERVER_IP = "localhost";
+    private final String SERVER_IP = "192.168.218.1";
     private final int SERVER_PORT = 5000;
 
     public AuthController(AuthView authView, ChatModel model) {

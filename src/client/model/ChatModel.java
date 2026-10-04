@@ -108,7 +108,6 @@ public class ChatModel {
         }).start();
     }
 
-    // ĐÃ CẬP NHẬT: Tách bỏ chữ (Online/Offline) để gửi đi đúng tên thật
     public void sendText(String target, String text) {
         String realTarget = target;
         if (!target.equals("Mọi người") && target.contains(" (")) {
@@ -126,18 +125,17 @@ public class ChatModel {
     }
 
     // ==== MẠNG NGANG HÀNG (P2P) DÀNH CHO TRUYỀN FILE ====
-    // ĐÃ CẬP NHẬT: Không cho phép gửi file P2P cho người Offline
     public void sendFile(String target, File file) throws IOException {
         String realTarget = target;
         if (!target.equals("Mọi người") && target.contains(" (")) {
             realTarget = target.substring(0, target.indexOf(" ("));
         }
 
+        // Gửi cho Mọi người (Quét toàn bộ danh bạ để gửi P2P cho từng người)
         if (realTarget.equals("Mọi người")) {
             for (Map.Entry<String, String> entry : userIPs.entrySet()) {
-                String peerUsername = entry.getKey();
                 String peerIP = entry.getValue();
-                int peerPort = userPorts.get(peerUsername);
+                int peerPort = userPorts.get(entry.getKey());
 
                 new Thread(() -> {
                     try (Socket p2pSocket = new Socket(peerIP, peerPort);
@@ -146,7 +144,7 @@ public class ChatModel {
 
                         p2pDos.writeUTF("[Nhóm từ " + myUsername + "]");
                         p2pDos.writeUTF(file.getName());
-                        p2pDos.writeInt((int) file.length());
+                        p2pDos.writeLong(file.length()); // Sửa: Dùng writeLong để hỗ trợ file > 2GB
 
                         byte[] buffer = new byte[4096];
                         int bytesRead;
@@ -160,6 +158,7 @@ public class ChatModel {
                 }).start();
             }
         } else {
+            // Gửi Riêng tư
             if (!userIPs.containsKey(realTarget)) {
                 if (controller != null) {
                     controller.onMessageReceived("Hệ thống", "Người dùng [" + realTarget + "] đang Offline, không thể truyền file!");
@@ -177,7 +176,7 @@ public class ChatModel {
 
                     p2pDos.writeUTF("[Riêng tư từ " + myUsername + "]");
                     p2pDos.writeUTF(file.getName());
-                    p2pDos.writeInt((int) file.length());
+                    p2pDos.writeLong(file.length()); // Sửa: Dùng writeLong
 
                     byte[] buffer = new byte[4096];
                     int bytesRead;
@@ -192,6 +191,7 @@ public class ChatModel {
         }
     }
 
+    // Luồng ngầm hứng file trực tiếp xuống ổ cứng
     private void startP2PListener(ServerSocket p2pServer) {
         new Thread(() -> {
             while (true) {
@@ -201,13 +201,27 @@ public class ChatModel {
 
                     String senderName = p2pDis.readUTF();
                     String fileName = p2pDis.readUTF();
-                    int fileLength = p2pDis.readInt();
+                    long fileSize = p2pDis.readLong(); // Sửa: Hứng bằng readLong
 
-                    byte[] fileData = new byte[fileLength];
-                    p2pDis.readFully(fileData);
+                    File saveDir = new File("ReceivedFiles");
+                    if (!saveDir.exists()) {
+                        saveDir.mkdirs();
+                    }
+
+                    File destFile = new File(saveDir, System.currentTimeMillis() + "_" + fileName);
+
+                    try (FileOutputStream fos = new FileOutputStream(destFile)) {
+                        byte[] buffer = new byte[4096];
+                        long remaining = fileSize;
+                        int read;
+                        while (remaining > 0 && (read = p2pDis.read(buffer, 0, (int) Math.min(buffer.length, remaining))) != -1) {
+                            fos.write(buffer, 0, read);
+                            remaining -= read;
+                        }
+                    }
 
                     if (controller != null) {
-                        controller.onFileReceived(senderName, fileName, fileData);
+                        controller.onFileReceived(senderName, fileName, new byte[0]);
                     }
                     senderSocket.close();
                 } catch (IOException e) {
@@ -215,5 +229,4 @@ public class ChatModel {
                 }
             }
         }).start();
-    }
-}
+    }}
