@@ -34,7 +34,10 @@ public class ProfileDialog extends JDialog {
                 g2.setColor(Color.BLACK);
                 g2.setFont(new Font("Segoe UI", Font.BOLD, 36));
                 FontMetrics fm = g2.getFontMetrics();
+
+                // ĐÃ SỬA LỖI Ở ĐÂY: Bổ sung dấu trừ (-) vào phép tính
                 g2.drawString(ownerNameInitial, (80 - fm.stringWidth(ownerNameInitial)) / 2, (80 - fm.getHeight()) / 2 + fm.getAscent());
+
                 g2.dispose();
             }
         };

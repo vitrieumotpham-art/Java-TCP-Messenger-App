@@ -15,10 +15,8 @@ public class ChatModel {
     private ChatController controller;
     private String myUsername;
 
-    // Đưa p2pServer ra làm biến toàn cục
     private ServerSocket p2pServer;
 
-    // Danh bạ lưu trữ IP và Port P2P của người khác
     private Map<String, String> userIPs = new HashMap<>();
     private Map<String, Integer> userPorts = new HashMap<>();
 
@@ -26,7 +24,6 @@ public class ChatModel {
         this.controller = controller;
     }
 
-    // 1. Hàm xác thực Đăng nhập / Đăng ký
     public String authenticate(String serverIp, int serverPort, String command, String username, String password) {
         try {
             if (mainSocket == null || mainSocket.isClosed()) {
@@ -65,7 +62,6 @@ public class ChatModel {
         startMessageListener();
     }
 
-    // 2. Hàm lắng nghe tin nhắn & danh bạ (ĐÃ CẬP NHẬT TRẠNG THÁI ONLINE/OFFLINE)
     private void startMessageListener() {
         new Thread(() -> {
             try {
@@ -74,65 +70,148 @@ public class ChatModel {
                     String sender = mainDis.readUTF();
                     String content = mainDis.readUTF();
 
+                    // [LỆNH 1]: Nhận tin nhắn riêng / chung
                     if (type == 1) {
-                        controller.onMessageReceived(sender, content);
-                    } else if (type == 3) {
-                        String[] usersData = content.split(",");
-                        String[] displayUsers = new String[usersData.length];
-                        userIPs.clear(); userPorts.clear();
+                        if (controller != null) controller.onMessageReceived(sender, content);
+                    }
+                    // [LỆNH 2]: Nhận phản hồi tạo nhóm
+                    else if (type == 2) {
+                        if (content.startsWith("CREATE_GROUP_SUCCESS")) {
+                            System.out.println("Tạo nhóm thành công!");
+                        }
+                    }
+                    // [LỆNH 3]: Phân biệt danh sách Online cũ và Tin nhắn Nhóm mới
+                    else if (type == 3) {
+                        if (content.contains(":ONLINE") || content.contains(":Offline") || content.startsWith("Mọi người,")) {
+                            String[] usersData = content.split(",");
+                            String[] displayUsers = new String[usersData.length];
+                            userIPs.clear(); userPorts.clear();
 
-                        displayUsers[0] = "Mọi người";
-                        for (int i = 1; i < usersData.length; i++) {
-                            String[] parts = usersData[i].split(":");
-                            String uname = parts[0];
+                            displayUsers[0] = "Mọi người";
+                            for (int i = 1; i < usersData.length; i++) {
+                                String[] parts = usersData[i].split(":");
+                                String uname = parts[0];
 
-                            // Server gửi về định dạng: Tên:IP:Port:TrạngThái
-                            if (parts.length == 4 && parts[3].equals("ONLINE")) {
-                                displayUsers[i] = uname + " (🟢 Online)";
-                                userIPs.put(uname, parts[1]);
-                                userPorts.put(uname, Integer.parseInt(parts[2]));
+                                if (parts.length == 4 && parts[3].equals("ONLINE")) {
+                                    displayUsers[i] = uname + " (🟢 Online)";
+                                    userIPs.put(uname, parts[1]);
+                                    userPorts.put(uname, Integer.parseInt(parts[2]));
+                                } else {
+                                    displayUsers[i] = uname + " (⚪ Offline)";
+                                }
+                            }
+                            if (controller != null) controller.onUserListReceived(displayUsers);
+                        } else {
+                            // Đây thực sự là tin nhắn từ Nhóm riêng (type = 3)
+                            if (controller != null) controller.onGroupMessageReceived(sender, content);
+                        }
+                    }
+                    // [LỆNH 4]: Nhận danh sách các Nhóm để hiển thị
+                    else if (type == 4) {
+                        // sender = "SERVER_GROUP_LIST", content = "Nhóm 1,Nhóm 2" (hoặc rỗng)
+                        String[] rawGroups = content.isEmpty() ? new String[0] : content.split(",");
+                        String[] formattedGroups = new String[rawGroups.length];
+
+                        for (int i = 0; i < rawGroups.length; i++) {
+                            String gName = rawGroups[i].trim();
+                            // Thêm tiền tố [Nhóm] để giao diện nhận diện và đổi màu xanh dương
+                            if (!gName.startsWith("[Nhóm] ")) {
+                                formattedGroups[i] = "[Nhóm] " + gName;
                             } else {
-                                displayUsers[i] = uname + " (⚪ Offline)";
+                                formattedGroups[i] = gName;
                             }
                         }
-                        if (controller != null) {
-                            controller.onUserListReceived(displayUsers);
-                        }
+
+                        if (controller != null) controller.onGroupListReceived(formattedGroups);
+                    }
+                    // [LỆNH 5]: Nhận danh sách thành viên của 1 nhóm
+                    else if (type == 5) {
+                        if (controller != null) controller.onGroupMembersReceived(sender, content);
                     }
                 }
             } catch (IOException e) {
-                if (controller != null) {
-                    controller.onMessageReceived("Hệ thống", "Mất kết nối tới Server!");
-                }
+                if (controller != null) controller.onMessageReceived("Hệ thống", "Mất kết nối tới Server!");
             }
         }).start();
     }
 
     public void sendText(String target, String text) {
-        String realTarget = target;
+        String parsedTarget = target;
         if (!target.equals("Mọi người") && target.contains(" (")) {
-            realTarget = target.substring(0, target.indexOf(" ("));
+            parsedTarget = target.substring(0, target.indexOf(" ("));
         }
 
-        try {
-            mainDos.writeInt(1);
-            mainDos.writeUTF(realTarget);
-            mainDos.writeUTF(text);
-            mainDos.flush();
-        } catch (IOException e) {
-            e.printStackTrace();
+        final String finalTarget = parsedTarget;
+
+        // BƯỚC KHẮC PHỤC LỖI GỬI NHẦM LUỒNG: Tự động nhận diện nếu đang chat trong Nhóm thì dùng Lệnh 3
+        if (finalTarget.startsWith("[Nhóm] ")) {
+            String groupName = finalTarget.replace("[Nhóm] ", "");
+            sendGroupMessage(groupName, text);
+            return; // Ngắt luôn tại đây để không chạy lệnh 1 bên dưới nữa
         }
+
+        // Lệnh 1: Xử lý bình thường cho Chat chung và Chat cá nhân 1-1
+        new Thread(() -> {
+            try {
+                mainDos.writeInt(1);
+                mainDos.writeUTF(finalTarget);
+                mainDos.writeUTF(text);
+                mainDos.flush();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }).start();
     }
 
-    // ==== MẠNG NGANG HÀNG (P2P) DÀNH CHO TRUYỀN FILE ====
+    // --- CÁC HÀM XỬ LÝ NHÓM ---
+    public void createGroup(String groupName, java.util.List<String> members) {
+        new Thread(() -> {
+            try {
+                mainDos.writeInt(2); // type = 2
+                mainDos.writeUTF(groupName);
+                mainDos.writeUTF(String.join(",", members));
+                mainDos.flush();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    public void sendGroupMessage(String groupName, String text) {
+        new Thread(() -> {
+            try {
+                mainDos.writeInt(3); // type = 3
+                mainDos.writeUTF(groupName);
+                mainDos.writeUTF(text);
+                mainDos.flush();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    public void requestGroupMembers(String groupName) {
+        new Thread(() -> {
+            try {
+                mainDos.writeInt(5); // type = 5
+                mainDos.writeUTF(groupName);
+                mainDos.flush();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    // ==== MẠNG NGANG HÀNG (P2P) ====
     public void sendFile(String target, File file) throws IOException {
-        String realTarget = target;
+        String parsedTarget = target;
         if (!target.equals("Mọi người") && target.contains(" (")) {
-            realTarget = target.substring(0, target.indexOf(" ("));
+            parsedTarget = target.substring(0, target.indexOf(" ("));
         }
 
-        // Gửi cho Mọi người (Quét toàn bộ danh bạ để gửi P2P cho từng người)
-        if (realTarget.equals("Mọi người")) {
+        final String finalTarget = parsedTarget;
+
+        if (finalTarget.equals("Mọi người")) {
             for (Map.Entry<String, String> entry : userIPs.entrySet()) {
                 String peerIP = entry.getValue();
                 int peerPort = userPorts.get(entry.getKey());
@@ -144,7 +223,7 @@ public class ChatModel {
 
                         p2pDos.writeUTF("[Nhóm từ " + myUsername + "]");
                         p2pDos.writeUTF(file.getName());
-                        p2pDos.writeLong(file.length()); // Sửa: Dùng writeLong để hỗ trợ file > 2GB
+                        p2pDos.writeLong(file.length());
 
                         byte[] buffer = new byte[4096];
                         int bytesRead;
@@ -158,16 +237,10 @@ public class ChatModel {
                 }).start();
             }
         } else {
-            // Gửi Riêng tư
-            if (!userIPs.containsKey(realTarget)) {
-                if (controller != null) {
-                    controller.onMessageReceived("Hệ thống", "Người dùng [" + realTarget + "] đang Offline, không thể truyền file!");
-                }
-                return;
-            }
+            if (!userIPs.containsKey(finalTarget)) return;
 
-            String targetIP = userIPs.get(realTarget);
-            int targetPort = userPorts.get(realTarget);
+            String targetIP = userIPs.get(finalTarget);
+            int targetPort = userPorts.get(finalTarget);
 
             new Thread(() -> {
                 try (Socket p2pSocket = new Socket(targetIP, targetPort);
@@ -176,7 +249,7 @@ public class ChatModel {
 
                     p2pDos.writeUTF("[Riêng tư từ " + myUsername + "]");
                     p2pDos.writeUTF(file.getName());
-                    p2pDos.writeLong(file.length()); // Sửa: Dùng writeLong
+                    p2pDos.writeLong(file.length());
 
                     byte[] buffer = new byte[4096];
                     int bytesRead;
@@ -191,7 +264,6 @@ public class ChatModel {
         }
     }
 
-    // Luồng ngầm hứng file trực tiếp xuống ổ cứng
     private void startP2PListener(ServerSocket p2pServer) {
         new Thread(() -> {
             while (true) {
@@ -201,12 +273,10 @@ public class ChatModel {
 
                     String senderName = p2pDis.readUTF();
                     String fileName = p2pDis.readUTF();
-                    long fileSize = p2pDis.readLong(); // Sửa: Hứng bằng readLong
+                    long fileSize = p2pDis.readLong();
 
                     File saveDir = new File("ReceivedFiles");
-                    if (!saveDir.exists()) {
-                        saveDir.mkdirs();
-                    }
+                    if (!saveDir.exists()) saveDir.mkdirs();
 
                     File destFile = new File(saveDir, System.currentTimeMillis() + "_" + fileName);
 
@@ -220,13 +290,12 @@ public class ChatModel {
                         }
                     }
 
-                    if (controller != null) {
-                        controller.onFileReceived(senderName, fileName, new byte[0]);
-                    }
+                    if (controller != null) controller.onFileReceived(senderName, fileName, new byte[0]);
                     senderSocket.close();
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
             }
         }).start();
-    }}
+    }
+}

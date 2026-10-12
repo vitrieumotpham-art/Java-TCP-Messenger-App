@@ -11,7 +11,7 @@ import java.util.Map;
 import javax.swing.event.ListSelectionListener;
 
 public class ChatView extends JFrame {
-    private ContactListPanel contactListPanel; // Tách riêng phần danh bạ
+    private ContactListPanel contactListPanel;
     private JPanel chatContainer;
     private CardLayout cardLayout;
 
@@ -34,10 +34,10 @@ public class ChatView extends JFrame {
         setLocationRelativeTo(null);
         setLayout(new BorderLayout());
 
-        // ================= CỘT BÊN TRÁI: DANH BẠ (Dùng ContactListPanel đã tách) =================
+        // ================= CỘT BÊN TRÁI: DANH BẠ =================
         contactListPanel = new ContactListPanel("");
 
-        // Tích hợp thanh profile cá nhân phía trên danh bạ
+        // Tích hợp thanh profile cá nhân
         JPanel leftTopContainer = new JPanel();
         leftTopContainer.setLayout(new BoxLayout(leftTopContainer, BoxLayout.Y_AXIS));
         leftTopContainer.setBackground(new Color(245, 246, 247));
@@ -57,7 +57,10 @@ public class ChatView extends JFrame {
                 g2.setColor(Color.BLACK);
                 g2.setFont(new Font("Segoe UI", Font.BOLD, 18));
                 FontMetrics fm = g2.getFontMetrics();
+
+                // ĐÃ SỬA LỖI CÚ PHÁP: Thêm đầy đủ dấu trừ (-) vào công thức căn giữa
                 g2.drawString(ownerNameInitial, (40 - fm.stringWidth(ownerNameInitial)) / 2, (40 - fm.getHeight()) / 2 + fm.getAscent());
+
                 g2.dispose();
             }
         };
@@ -85,8 +88,10 @@ public class ChatView extends JFrame {
         profileHeader.add(ownerInfoPanel, BorderLayout.WEST);
         leftTopContainer.add(profileHeader);
 
-        // Thêm profile header vào đầu của ContactListPanel
-        contactListPanel.add(leftTopContainer, BorderLayout.NORTH);
+        // Bọc chung Profile và ContactList vào 1 Panel độc lập để không chèn nhau
+        JPanel leftSidePanel = new JPanel(new BorderLayout());
+        leftSidePanel.add(leftTopContainer, BorderLayout.NORTH);
+        leftSidePanel.add(contactListPanel, BorderLayout.CENTER);
 
         // ================= CỘT BÊN PHẢI: KHUNG CHAT =================
         JPanel rightPanel = new JPanel(new BorderLayout());
@@ -128,7 +133,7 @@ public class ChatView extends JFrame {
         rightPanel.add(bottomPanel, BorderLayout.SOUTH);
 
         // Ghép 2 cột vào SplitPane chính
-        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, contactListPanel, rightPanel);
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftSidePanel, rightPanel);
         splitPane.setDividerLocation(300);
         splitPane.setDividerSize(1);
         splitPane.setEnabled(false);
@@ -158,10 +163,14 @@ public class ChatView extends JFrame {
     }
 
     private String extractRealName(String displayName) {
-        if (displayName != null && displayName.contains(" (")) {
-            return displayName.substring(0, displayName.indexOf(" ("));
+        String name = displayName;
+        if (name != null && name.startsWith("[Nhóm] ")) {
+            name = name.replace("[Nhóm] ", "");
         }
-        return displayName;
+        if (name != null && name.contains(" (")) {
+            name = name.substring(0, name.indexOf(" ("));
+        }
+        return name;
     }
 
     public void getOrCreateChatArea(String realName) {
@@ -185,11 +194,21 @@ public class ChatView extends JFrame {
     }
 
     public void appendMessageToChat(String realName, String message) {
+        // Chặn không cho hiển thị các thông báo từ "Hệ thống"
+        if (message.startsWith("Hệ thống: ")) {
+            return;
+        }
+
+        // Loại bỏ tên tab (realName) bị dính ở đầu tin nhắn do Controller nối vào
+        if (message.startsWith(realName + ": ")) {
+            message = message.substring(realName.length() + 2);
+        }
+
         getOrCreateChatArea(realName);
         JPanel targetPanel = chatPanels.get(realName);
 
         boolean isMe = message.startsWith("Bạn: ") || message.startsWith("Bạn đã gửi file: ");
-        boolean isGroup = realName.equals("Mọi người");
+        boolean isGroup = realName.equals("Mọi người") || realName.startsWith("[Nhóm]");
 
         String cleanMessage = message;
         String senderName = "";
@@ -202,7 +221,6 @@ public class ChatView extends JFrame {
             cleanMessage = message.substring(message.indexOf(": ") + 2);
         }
 
-        // Gọi trực tiếp từ MessageBubbleRenderer đã tách lớp
         JPanel bubbleWrapper = MessageBubbleRenderer.createMessageBubble(senderName, cleanMessage, isMe, isGroup);
         targetPanel.add(bubbleWrapper);
         targetPanel.add(Box.createVerticalStrut(2));
@@ -247,5 +265,47 @@ public class ChatView extends JFrame {
 
     public void setLogoutListener(ActionListener l) { if (profileDialog != null) profileDialog.setLogoutListener(l); }
     public void setChangePasswordListener(ActionListener l) { if (profileDialog != null) profileDialog.setChangePasswordListener(l); }
-    public void closeProfileDialog() { if (profileDialog != null) profileDialog.dispose(); }
+
+    public void closeProfileDialog() {
+        if (profileDialog != null) profileDialog.dispose();
+    }
+
+    public void setCreateGroupListener(ActionListener l) {
+        contactListPanel.setCreateGroupListener(l);
+    }
+
+    public void showCreateGroupDialog(String[] availableUsers, java.util.function.BiConsumer<String, java.util.List<String>> onCreate) {
+        JTextField txtGroupName = new JTextField();
+
+        String[] cleanUsers = new String[availableUsers.length];
+        for (int i = 0; i < availableUsers.length; i++) {
+            cleanUsers[i] = availableUsers[i].replace("🟢 ", "").replace(" (Bạn)", "").replace("⚪ ", "");
+        }
+
+        JList<String> listUsers = new JList<>(cleanUsers);
+        listUsers.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        JScrollPane scroll = new JScrollPane(listUsers);
+        scroll.setPreferredSize(new Dimension(250, 150));
+
+        Object[] message = {
+                "Tên nhóm mới:", txtGroupName,
+                "Chọn thành viên (Giữ Ctrl để chọn nhiều):", scroll
+        };
+
+        int option = JOptionPane.showConfirmDialog(this, message, "Tạo Nhóm Chat Riêng", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (option == JOptionPane.OK_OPTION) {
+            String groupName = txtGroupName.getText().trim();
+            java.util.List<String> selected = listUsers.getSelectedValuesList();
+
+            if (groupName.isEmpty() || selected.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Tên nhóm và thành viên không được để trống!", "Lỗi", JOptionPane.ERROR_MESSAGE);
+            } else {
+                onCreate.accept(groupName, selected);
+            }
+        }
+    }
+
+    public void updateChatHeaderStatus(String status) {
+        chatHeaderPanel.setCustomStatus(status);
+    }
 }

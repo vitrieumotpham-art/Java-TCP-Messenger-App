@@ -10,16 +10,17 @@ import java.io.File;
 public class ChatController {
     private ChatView view;
     private ChatModel model;
-    private String myUsername; // Lưu tên của chính mình
+    private String myUsername;
 
-    // NÂNG CẤP: Yêu cầu truyền tên myUsername khi khởi tạo Controller
+    private String[] currentOnlineUsers = new String[]{"Mọi người"};
+    private String[] currentGroupList = new String[0];
+
     public ChatController(ChatView view, ChatModel model, String myUsername) {
         this.view = view;
         this.model = model;
         this.myUsername = myUsername;
         this.model.setController(this);
 
-        // Hiển thị tên thật của chủ Client (vd: "bin") lên góc trái giao diện
         this.view.setOwnerName(myUsername);
 
         this.view.setSendTextListener(e -> handleSendText());
@@ -30,24 +31,30 @@ public class ChatController {
                 String selectedUser = view.getSelectedUser();
                 if (selectedUser != null) {
                     view.switchToChat(selectedUser);
+
+                    // Nếu bấm vào nhóm -> Yêu cầu tải danh sách thành viên hiển thị lên Header
+                    if (selectedUser.startsWith("[Nhóm] ")) {
+                        String groupName = selectedUser.replace("[Nhóm] ", "");
+                        model.requestGroupMembers(groupName);
+                    }
                 }
             }
         });
 
-        // --- SỰ KIỆN NÚT TRANG CÁ NHÂN ---
+        // SỰ KIỆN NÚT TẠO NHÓM
+        this.view.setCreateGroupListener(e -> {
+            this.view.showCreateGroupDialog(currentOnlineUsers, (groupName, selectedMembers) -> {
+                model.createGroup(groupName, selectedMembers);
+            });
+        });
+
         this.view.setLogoutListener(e -> {
             int confirm = JOptionPane.showConfirmDialog(view, "Bạn có chắc chắn muốn thoát và đăng xuất?", "Xác nhận", JOptionPane.YES_NO_OPTION);
-            if (confirm == JOptionPane.YES_OPTION) {
-                System.exit(0); // Đóng app. (Sau này có thể nâng cấp để quay lại AuthView)
-            }
+            if (confirm == JOptionPane.YES_OPTION) System.exit(0);
         });
 
         this.view.setChangePasswordListener(e -> {
-            // Hiển thị thông báo chờ phát triển phía Server
-            JOptionPane.showMessageDialog(view,
-                    "Chức năng đổi mật khẩu sẽ được phát triển ở bản cập nhật Server tiếp theo!",
-                    "Đang hoàn thiện",
-                    JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(view, "Chức năng đổi mật khẩu sẽ được cập nhật sau!", "Thông báo", JOptionPane.INFORMATION_MESSAGE);
         });
     }
 
@@ -57,21 +64,32 @@ public class ChatController {
 
         String text = view.getMessageText();
         if (!text.isEmpty()) {
-            model.sendText(targetRaw, text);
-            view.clearMessageText();
+            if (targetRaw.startsWith("[Nhóm] ")) {
+                String groupName = targetRaw.replace("[Nhóm] ", "");
+                model.sendGroupMessage(groupName, text);
+                view.clearMessageText();
+                view.appendMessageToChat(groupName, "Bạn: " + text);
+            } else {
+                model.sendText(targetRaw, text);
+                view.clearMessageText();
 
-            String realTarget = targetRaw;
-            if (!targetRaw.equals("Mọi người") && targetRaw.contains(" (")) {
-                realTarget = targetRaw.substring(0, targetRaw.indexOf(" ("));
+                String realTarget = targetRaw;
+                if (!targetRaw.equals("Mọi người") && targetRaw.contains(" (")) {
+                    realTarget = targetRaw.substring(0, targetRaw.indexOf(" ("));
+                }
+                view.appendMessageToChat(realTarget, "Bạn: " + text);
             }
-
-            view.appendMessageToChat(realTarget, "Bạn: " + text);
         }
     }
 
     private void handleSendFile() {
         String targetRaw = view.getSelectedUser();
         if (targetRaw == null) return;
+
+        if (targetRaw.startsWith("[Nhóm] ")) {
+            JOptionPane.showMessageDialog(view, "Vui lòng gửi file qua chat cá nhân (1-1) hoặc phòng chung!", "Thông báo", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
 
         JFileChooser fileChooser = new JFileChooser();
         int option = fileChooser.showOpenDialog(view);
@@ -85,9 +103,7 @@ public class ChatController {
                 if (!targetRaw.equals("Mọi người") && targetRaw.contains(" (")) {
                     realTarget = targetRaw.substring(0, targetRaw.indexOf(" ("));
                 }
-
                 view.appendMessageToChat(realTarget, "Bạn đã gửi file: " + file.getName());
-
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(view, "Lỗi gửi file: " + ex.getMessage());
             }
@@ -106,11 +122,56 @@ public class ChatController {
             displaySender = "Bạn";
         }
 
-        view.appendMessageToChat(targetChatName, displaySender + ": " + content);
+        // 1. Chốt cứng giá trị bằng biến final
+        final String finalTarget = targetChatName;
+        final String finalSender = displaySender;
+
+        // 2. BẮT BUỘC dùng biến finalTarget và finalSender ở đây
+        SwingUtilities.invokeLater(() -> view.appendMessageToChat(finalTarget, finalSender + ": " + content));
+    }
+
+    public void onGroupMessageReceived(String groupName, String content) {
+        int separatorIdx = content.indexOf(":");
+        if (separatorIdx != -1) {
+            String sender = content.substring(0, separatorIdx);
+            String msg = content.substring(separatorIdx + 2);
+
+            if (!sender.equals(myUsername)) {
+                SwingUtilities.invokeLater(() -> view.appendMessageToChat(groupName, sender + ": " + msg));
+            }
+        }
     }
 
     public void onUserListReceived(String[] users) {
-        SwingUtilities.invokeLater(() -> view.updateOnlineUsers(users));
+        this.currentOnlineUsers = users;
+        updateCombinedList();
+    }
+
+    public void onGroupListReceived(String[] groups) {
+        this.currentGroupList = groups;
+        updateCombinedList(); // Ngay khi nhận được danh sách nhóm, lập tức vẽ lại giao diện
+    }
+
+    public void onGroupMembersReceived(String groupName, String membersStr) {
+        SwingUtilities.invokeLater(() -> {
+            String selectedUser = view.getSelectedUser();
+            if (selectedUser != null && selectedUser.equals("[Nhóm] " + groupName)) {
+                view.updateChatHeaderStatus("Thành viên: " + membersStr);
+            }
+        });
+    }
+
+    private void updateCombinedList() {
+        int total = currentOnlineUsers.length + currentGroupList.length;
+        String[] combined = new String[total];
+
+        combined[0] = currentOnlineUsers.length > 0 ? currentOnlineUsers[0] : "Mọi người";
+
+        int idx = 1;
+        for (String g : currentGroupList) combined[idx++] = "[Nhóm] " + g;
+        for (int i = 1; i < currentOnlineUsers.length; i++) combined[idx++] = currentOnlineUsers[i];
+
+        SwingUtilities.invokeLater(() -> view.updateOnlineUsers(combined));
     }
 
     public void onFileReceived(String sender, String fileName, byte[] fileData) {
@@ -119,6 +180,10 @@ public class ChatController {
             targetChatName = sender.replace("[Riêng tư từ ", "").replace("]", "");
         }
 
-        view.appendMessageToChat(targetChatName, ">> ĐÃ NHẬN FILE: " + fileName + " từ " + sender);
+        // 1. Chốt cứng giá trị bằng biến final
+        final String finalTarget = targetChatName;
+
+        // 2. BẮT BUỘC dùng biến finalTarget ở đây
+        SwingUtilities.invokeLater(() -> view.appendMessageToChat(finalTarget, ">> ĐÃ NHẬN FILE: " + fileName + " từ " + sender));
     }
 }

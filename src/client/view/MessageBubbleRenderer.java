@@ -13,17 +13,20 @@ public class MessageBubbleRenderer {
         wrapper.setLayout(new BoxLayout(wrapper, BoxLayout.Y_AXIS));
         wrapper.setBackground(Color.WHITE);
 
+        // Name label (only for group chats and NOT the current user)
         if (isGroup && !isMe && !senderName.isEmpty()) {
             JLabel lblName = new JLabel(senderName);
             lblName.setFont(new Font("Segoe UI", Font.BOLD, 11));
             lblName.setForeground(new Color(150, 150, 150));
-            JPanel namePanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 20, 0));
+            // Align name to the left
+            JPanel namePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 20, 0));
             namePanel.setBackground(Color.WHITE);
             namePanel.add(lblName);
             wrapper.add(namePanel);
         }
 
-        JPanel row = new JPanel(new FlowLayout(isMe ? FlowLayout.LEFT : FlowLayout.RIGHT, 15, 2));
+        // Row containing the bubble - RIGHT for 'me', LEFT for 'others'
+        JPanel row = new JPanel(new FlowLayout(isMe ? FlowLayout.RIGHT : FlowLayout.LEFT, 15, 2));
         row.setBackground(Color.WHITE);
 
         String safeMessage = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>");
@@ -46,10 +49,10 @@ public class MessageBubbleRenderer {
         bubble.setBorder(new EmptyBorder(10, 16, 10, 16));
         bubble.add(label, BorderLayout.CENTER);
 
+        // File handling logic remains the same
         if (message.startsWith("[File] ") || message.startsWith(">> ĐÃ NHẬN FILE:")) {
             bubble.setCursor(new Cursor(Cursor.HAND_CURSOR));
 
-            // Tách lấy đúng tên file gốc từ chuỗi tin nhắn
             String exactFileName = "";
             if (message.startsWith("[File] ")) {
                 exactFileName = message.replace("[File] ", "");
@@ -70,12 +73,10 @@ public class MessageBubbleRenderer {
                             return;
                         }
 
-                        // Tìm file đã được tải ngầm trong thư mục ReceivedFiles
                         java.io.File actualDownloadedFile = null;
                         java.io.File[] files = receiveDir.listFiles();
                         if (files != null) {
                             for (java.io.File f : files) {
-                                // Kiểm tra xem file có kết thúc bằng tên gốc không (do lúc lưu có ghép thêm timestamp)
                                 if (f.getName().endsWith(finalFileName)) {
                                     actualDownloadedFile = f;
                                     break;
@@ -84,28 +85,21 @@ public class MessageBubbleRenderer {
                         }
 
                         if (actualDownloadedFile != null) {
-                            // Mở hộp thoại chọn nơi lưu file (Save As)
                             JFileChooser fileChooser = new JFileChooser();
                             fileChooser.setDialogTitle("Tải file về máy");
-
-                            // FIX: Ép hộp thoại mở ở thư mục Desktop thật của máy tính
                             fileChooser.setCurrentDirectory(new java.io.File(System.getProperty("user.home"), "Desktop"));
                             fileChooser.setSelectedFile(new java.io.File(finalFileName));
 
                             int userSelection = fileChooser.showSaveDialog(null);
                             if (userSelection == JFileChooser.APPROVE_OPTION) {
                                 java.io.File fileToSave = fileChooser.getSelectedFile();
-
-                                // FIX: Bắt lỗi UX chặn lưu vào các thư mục ảo (Quick Access)
                                 if (fileToSave.getAbsolutePath().startsWith("::")) {
                                     JOptionPane.showMessageDialog(null,
                                             "Không thể lưu vào thư mục Truy cập nhanh (Quick Access).\nVui lòng chọn thư mục thật (Desktop, Downloads, Ổ C, Ổ D...).",
                                             "Lỗi đường dẫn",
                                             JOptionPane.ERROR_MESSAGE);
-                                    return; // Dừng tiến trình lưu file
+                                    return;
                                 }
-
-                                // Copy file từ bộ nhớ tạm ra chỗ người dùng chọn
                                 java.nio.file.Files.copy(
                                         actualDownloadedFile.toPath(),
                                         fileToSave.toPath(),

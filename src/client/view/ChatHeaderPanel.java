@@ -35,6 +35,8 @@ public class ChatHeaderPanel extends JPanel {
                 g2.setColor(Color.BLACK);
                 g2.setFont(new Font("Segoe UI", Font.BOLD, 18));
                 FontMetrics fm = g2.getFontMetrics();
+
+                // ĐÃ SỬA LỖI CÚ PHÁP: Đã thêm đầy đủ dấu trừ (-) vào phép tính tọa độ
                 g2.drawString(currentInitial, (46 - fm.stringWidth(currentInitial)) / 2, (46 - fm.getHeight()) / 2 + fm.getAscent());
 
                 g2.setColor(Color.WHITE);
@@ -136,5 +138,10 @@ public class ChatHeaderPanel extends JPanel {
         btn.setOpaque(false);
         btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
         return btn;
+    }
+
+    public void setCustomStatus(String status) {
+        lblHeaderStatus.setText(status);
+        lblHeaderStatus.setForeground(new Color(138, 141, 145));
     }
 }

@@ -4,36 +4,45 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.ListSelectionListener;
 import java.awt.*;
+import java.awt.event.ActionListener;
 
 public class ContactListPanel extends JPanel {
     private JList<String> userList;
     private DefaultListModel<String> listModel;
     private JTextField txtSearch;
+    private JButton btnCreateGroup; // MỚI THÊM: Nút tạo nhóm
 
     public ContactListPanel(String ownerUsername) {
         setLayout(new BorderLayout());
         setBackground(new Color(245, 246, 247));
         setPreferredSize(new Dimension(300, 0));
 
-        // Top container (Profile header + Ô tìm kiếm)
         JPanel leftTopContainer = new JPanel();
         leftTopContainer.setLayout(new BoxLayout(leftTopContainer, BoxLayout.Y_AXIS));
         leftTopContainer.setBackground(new Color(245, 246, 247));
 
-        // Ô tìm kiếm
         txtSearch = new JTextField(" Tìm kiếm...");
         txtSearch.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         txtSearch.setBackground(new Color(228, 230, 235));
         txtSearch.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
 
-        JPanel searchWrapper = new JPanel(new BorderLayout());
+        // MỚI THÊM: Cấu hình nút tạo nhóm
+        btnCreateGroup = new JButton("👥+");
+        btnCreateGroup.setToolTipText("Tạo nhóm chat riêng");
+        btnCreateGroup.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        btnCreateGroup.setBackground(new Color(228, 230, 235));
+        btnCreateGroup.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
+        btnCreateGroup.setFocusPainted(false);
+        btnCreateGroup.setCursor(new Cursor(Cursor.HAND_CURSOR));
+
+        JPanel searchWrapper = new JPanel(new BorderLayout(5, 0)); // Thêm khoảng cách 5px
         searchWrapper.setBackground(new Color(245, 246, 247));
         searchWrapper.setBorder(new EmptyBorder(5, 15, 10, 15));
         searchWrapper.add(txtSearch, BorderLayout.CENTER);
+        searchWrapper.add(btnCreateGroup, BorderLayout.EAST); // Gắn nút vào góc phải
 
         leftTopContainer.add(searchWrapper);
 
-        // Danh sách user
         listModel = new DefaultListModel<>();
         userList = new JList<>(listModel);
         styleUserList(userList);
@@ -50,6 +59,8 @@ public class ContactListPanel extends JPanel {
         list.setFixedCellHeight(70);
         list.setCellRenderer((list1, value, index, isSelected, cellHasFocus) -> {
             boolean isOnline = value.contains("🟢");
+            // Highlight các mục là Nhóm
+            boolean isGroup = value.startsWith("[Nhóm]");
             String realName = extractRealName(value);
 
             JPanel panel = new JPanel(new BorderLayout(15, 0));
@@ -70,11 +81,14 @@ public class ContactListPanel extends JPanel {
                     String initial = realName.isEmpty() ? "?" : realName.substring(0, 1).toUpperCase();
                     FontMetrics fm = g2.getFontMetrics();
                     g2.drawString(initial, (50 - fm.stringWidth(initial)) / 2, (50 - fm.getHeight()) / 2 + fm.getAscent());
-                    g2.setColor(panel.getBackground());
-                    g2.fillOval(34, 34, 16, 16);
-                    if (isOnline) g2.setColor(new Color(49, 162, 76));
-                    else g2.setColor(new Color(160, 160, 160));
-                    g2.fillOval(36, 36, 12, 12);
+
+                    if (!isGroup) { // Nếu là nhóm thì không vẽ chấm online
+                        g2.setColor(panel.getBackground());
+                        g2.fillOval(34, 34, 16, 16);
+                        if (isOnline) g2.setColor(new Color(49, 162, 76));
+                        else g2.setColor(new Color(160, 160, 160));
+                        g2.fillOval(36, 36, 12, 12);
+                    }
                     g2.dispose();
                 }
             };
@@ -82,8 +96,9 @@ public class ContactListPanel extends JPanel {
             avatar.setOpaque(false);
 
             JLabel lblName = new JLabel(realName);
-            lblName.setFont(new Font("Segoe UI", isOnline ? Font.BOLD : Font.PLAIN, 16));
-            lblName.setForeground(Color.BLACK);
+            lblName.setFont(new Font("Segoe UI", (isOnline || isGroup) ? Font.BOLD : Font.PLAIN, 16));
+            if (isGroup) lblName.setForeground(new Color(10, 124, 255)); // Tên nhóm màu xanh
+            else lblName.setForeground(Color.BLACK);
 
             panel.add(avatar, BorderLayout.WEST);
             panel.add(lblName, BorderLayout.CENTER);
@@ -92,17 +107,21 @@ public class ContactListPanel extends JPanel {
     }
 
     private String extractRealName(String displayName) {
-        if (displayName != null && displayName.contains(" (")) {
-            return displayName.substring(0, displayName.indexOf(" ("));
+        String name = displayName;
+        if (name != null && name.startsWith("[Nhóm] ")) {
+            name = name.replace("[Nhóm] ", "");
         }
-        return displayName;
+        if (name != null && name.contains(" (")) {
+            name = name.substring(0, name.indexOf(" ("));
+        }
+        return name;
     }
 
-    public void updateOnlineUsers(String[] users) {
+    public void updateOnlineUsers(String[] items) {
         String currentSelection = userList.getSelectedValue();
         listModel.clear();
-        for (String u : users) {
-            listModel.addElement(u);
+        for (String item : items) {
+            listModel.addElement(item);
         }
         if (currentSelection != null) {
             userList.setSelectedValue(currentSelection, true);
@@ -113,4 +132,7 @@ public class ContactListPanel extends JPanel {
 
     public String getSelectedUser() { return userList.getSelectedValue(); }
     public void setListSelectionListener(ListSelectionListener l) { userList.addListSelectionListener(l); }
+
+    // MỚI THÊM: Truyền sự kiện khi bấm nút Tạo nhóm
+    public void setCreateGroupListener(ActionListener l) { btnCreateGroup.addActionListener(l); }
 }
